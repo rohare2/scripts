@@ -1,0 +1,190 @@
+#!/bin/ksh
+# $Id: sshx 467 2008-01-05 03:51:34Z rohare $ 
+# $State: Exp $
+# sshx
+#
+USAGE_ERROR="usage: sshx -h host_list [-x host_list ] [-p] -c command\n \
+	\t host_list - List of host names, cluster names (eg: TC),\n \
+	\t or a range of hosts (eg: tc[02-04,08,10]) \n \
+	\t\t -h  Hosts to include\n \
+	\t\t -x  Hosts to exclude\n \
+	\t\t -p  Parallel mode flag"
+
+# Parse command line parameters
+while [[ -n $1 ]]; do
+	case $1 in	# Determine paramater type
+		( -h )	# Include Host and/or Class
+			if [[ $h_cnt = 1 || $c_cnt = 1 ]] ; then
+				CMD="$CMD $1"
+			else
+				PARM=host
+				h_cnt="1"
+			fi ;;
+		
+		( -x )	# Exclude host
+			if [[ $x_cnt = 1 || $c_cnt = 1 ]] ; then
+				CMD="$CMD $1"
+			else
+				PARM=xhost
+				x_cnt="1"
+			fi ;;
+
+		( -p )	# Run in parallel mode
+			if [[ $p_cnt = 1 || $c_cnt = 1 ]] ; then
+				CMD="$CMD $1"
+			else
+				PARM=na
+				p_cnt="1"
+			fi ;;
+				
+		( -c )	# Command
+			PARM=cmd 
+			c_cnt="1" ;;
+
+		( * )	# Read paramater values
+			case $PARM in
+				( host )
+					HOSTS="$HOSTS $1" ;;
+				
+				( xhost )
+					XHOSTS="$XHOSTS $1" ;;
+
+				( range )
+					RANGE_LST="$RANGE_LST $1" ;;
+				
+				( cmd )
+					CMD="$CMD $1" ;;
+			esac ;;
+
+	esac
+	shift
+done
+
+# Check syntax
+if [ "$HOSTS" ] && [ "$CMD" ]; then
+		echo "" > /dev/null
+	else
+		echo $USAGE_ERROR
+	exit 0
+fi
+
+# Source Class definitions
+if [ -r ./sshx.conf ]; then
+	. ./sshx.conf
+else
+	if [ -r /usr/local/admin/etc/sshx.conf ]; then
+		. /usr/local/admin/etc/sshx.conf
+	fi
+fi
+
+# Resolve host list parameters
+#
+for parm in $HOSTS; do
+	# Is it a host list
+	if [ `echo $parm | grep -c \\\[` -gt 0 ]; then
+		# Process host list
+		sys_name=`echo $parm | cut -d "[" -f 1`
+		list=`echo $parm | sed 's/.*\[\(.*\)\].*/\1/'`
+		fld_cnt=`echo $list| awk -F, '{ print NF }'`
+		i=1
+		while [ $i -le $fld_cnt ]; do
+			field=`echo $list| awk -F, "{ print \\\$$i }"`
+			# Is it a range
+			if [ `echo $field | grep -c -` -gt 0 ]; then
+				# process range
+				sfield=`echo $field | cut -d "-" -f 1 | \
+					 sed 's/^0//'`
+				efield=`echo $field | cut -d "-" -f 2 | \
+					 sed 's/^0//'`
+				j=$sfield
+				while [ $j -le $efield ]; do
+					NEWLST="$NEWLST $sys_name$j"
+					j=$((j + 1))
+				done
+			else
+				# Not a range, add to hosts
+				NEWLST="$NEWLST $sys_name$field"
+			fi
+			i=$((i + 1))
+		done
+	else
+		# Not a host list, add to hosts
+		NEWLST="$NEWLST $parm"
+	fi
+done
+HOSTS=$NEWLST
+
+# Replace class definition with class members,
+# and insure there are no duplicate member entries
+if [ `echo $HOSTS | grep -c ALL` -gt 0 ]; then
+	# Replace Host list with all members
+	HOSTS=$ALL
+else
+	for class in $CLIST; do
+
+		if [ `echo $HOSTS | egrep -c \
+			-e "^$class |$class | $class$|^$class$"` -gt 0 ]; then
+
+			# Remove class variable from host list
+			HOSTS=`echo "$HOSTS" | sed -e "s/^$class //" \
+				-e "s/$class //" -e "s/$class$//" -e "s/^$class$//"`
+			
+			# Find class members
+			LIST=`set | egrep -e "^$class=" | \
+				sed -e "s/^.*='//" -e "s/'//g" | grep -v $class`
+
+			# Remove pre-existing class members
+			for node in $LIST; do
+				HOSTS=`echo "$HOSTS" | sed -e "s/$node //g"`
+			done
+
+			# Add all class members
+			HOSTS="$HOSTS $LIST"
+		fi
+	done
+fi
+
+# Remove excluded hosts
+if [[ -n $XHOSTS ]]; then
+	for node in $XHOSTS; do
+		HOSTS=`echo "$HOSTS" | sed -e "s/ $node / /g" \
+			-e "s/ $node$/ /"`
+	done
+fi
+
+# Remove missing sc20 node
+HOSTS=`echo "$HOSTS" | sed -e "s/sc20 //g"`
+
+# Remove extra spaces
+HOSTS=`echo $HOSTS | sed -e "s/ +/ /g"`
+
+# Execute the command on each host in list
+for node in $HOSTS; do
+	CLASS=
+	for class in $CLIST; do
+		if [ `set | egrep -e "^$class" | grep -c $node` -eq 1 ]; then
+			CLASS=$class
+		fi
+	done
+
+	if [[ -z $CLASS ]]; then
+		CLASS=none
+	fi
+
+	# Execute the command
+	if [ `echo $CLU_LIST | grep -cw $CLASS` -eq 0 ]; then
+		if [ $p_cnt ]; then
+			echo "$node: "; ssh $node "$CMD" \&
+		else
+			echo "$node: "; ssh $node "$CMD"
+		fi
+	else
+		# Use cluster alias rather than node name
+		CLUA=`echo $CLASS | gawk '{ print tolower($1) }'`
+		if [ $p_cnt ]; then
+			echo "$node: "; ssh $CLUA ssh $node "$CMD" \&
+		else
+			echo "$node: "; ssh $CLUA ssh $node "$CMD"
+		fi		
+	fi
+done

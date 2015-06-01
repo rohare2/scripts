@@ -1,0 +1,190 @@
+#!/bin/bash
+# MkCustomFedoraImage
+# $Id: MkFedoraImage 467 2008-01-05 03:51:34Z rohare $
+# $URL: https://restless/svn/scripts/trunk/MkFedoraImage $
+#
+# The purpose of this shell script is to make a Linux boot
+# disk that contains a kernel different from that included
+# in the standard distribution.
+# 
+# A custom boot disk can be used to build a system which
+# contains unsupported hardware.
+# 
+# The script will only work on Red Hat LIKE installation disks
+#
+
+USAGE_ERROR="usage:\tMkCustomBootImage [-v] [-k kernel-release] [-s boot-disk-image-path]\n \
+	\t\t [-o output-file-name] \n \
+	\tMkCustomBootImage -h \n \
+	\t\t -h\tHelp \n \
+	\t\t -k\tDesired kernel release. ex: 2.6.17-1.2142_FC4 \n \
+	\t\t\t\tDefault: (uname -r | sed 's/smp//') \n \
+	\t\t -s\tLocation of the boot disk filesystem to use \n \
+	\t\t\tfor the new image. ex: /mnt/cdrom \n \
+	\t\t -o\tImage file to create. ex: /var/tmp/CustomFedoraDisk1.iso\n \
+	\t\t\t\tDefault: PWD \n \
+	\t\t -v\tVerbose"
+
+
+# Parse command line parameters
+while [[ -n $1 ]]; do
+	case $1 in
+		( -h )  # Help
+			echo -e $USAGE_ERROR
+			exit ;;
+
+		( -k )  # kernel release
+			PARM=K_VERSION ;;
+
+		( -s )  # Source filesystem
+			PARM=S_IMAGE ;;
+
+		( -o )  # Output file
+			PARM=T_IMAGE ;;
+
+		( -v )  # Verbose mode
+			VERBOSE=1
+			PARM= ;; 
+
+		( * )   # Read paramater values
+			case $PARM in
+				( K_VERSION )  # Kernel version
+					K_VERSION=$1 ;;
+
+				( S_IMAGE )  # Boot disk image source
+					S_IMAGE=$1 ;;
+
+				( T_IMAGE )  # Target iso
+					T_IMAGE=$1 ;;
+
+			esac ;;
+	esac
+	shift
+done
+
+
+# Establish kernel version to install
+if [[ -z $K_VERSION ]] ; then
+	K_VERSION=`uname -r | sed 's/smp//'`
+fi
+
+if [[ -n $VERBOSE ]] ; then
+	echo "Kernel Version: ${K_VERSION}"
+fi
+
+
+# Check working directory
+WD=/var/tmp/CustomFedoraImage
+if [ -d $WD ] ; then
+	echo "Error: Temporary working directory"
+	echo "${WD} already exists"
+	read -p "Continue (Y,n)" ans
+	if [[ $ans == "n" ]] ; then
+		exit
+	fi
+fi
+
+
+# Locate Fedora Boot Disk location
+if [[ -z $S_IMAGE  ]] ; then
+	STATUS=`mount | grep -c media\/disk`
+	if [[ $STATUS == 1 ]] ; then
+		S_IMAGE=/media/disk
+	else
+		echo "No image source specified and no CD-ROM found"
+		echo -e $USAGE_ERROR
+		exit
+	fi
+fi
+
+if [ $VERBOSE ] ; then
+	echo "Source: $S_IMAGE"
+fi
+
+
+# Define output location
+if [[ -z $T_IMAGE ]] ; then
+	T_IMAGE="`pwd`/CustomFedoraDisk1.iso"
+fi
+
+if [ $VERBOSE ] ; then
+	echo "Target: $T_IMAGE"
+fi
+
+
+# Create working directory
+if [ ! -d $WD ] ; then
+	mkdir $WD
+fi
+
+if [ $VERBOSE ] ; then
+	echo "Working directory: ${WD}"
+fi
+
+
+# Make a working copy of Fedora Boot Disk
+if  [ -d $S_IMAGE ] ; then
+	rsync -avz ${S_IMAGE}/ ${WD}/
+else
+	echo "${S_IMAGE} missing"
+	exit
+fi
+
+
+# Unpack Fedora initrd filesystem
+cd ${WD}/isolinux
+cp initrd.img initrd.cpio.gz
+gunzip -f initrd.cpio.gz
+mkdir initrd.d
+cd initrd.d
+cpio -id < ../initrd.cpio
+
+
+# Unpack modules
+cd modules
+mv modules.cgz modules.cpio.gz
+gunzip -f modules.cpio.gz
+mkdir modules.d
+cd modules.d
+cpio -id < ../modules.cpio
+
+
+# Copy new kernel modules to working directory
+mkdir $K_VERSION
+ls 2.6.15-1.2054_FC5/i586 | while read i; do
+	find /lib/modules/${K_VERSION}/kernel -name $i -exec cp {} ${K_VERSION}/ \;
+done
+
+
+# Copy pci.ids to new image
+cp /usr/share/hwdata/pci.ids ${WD}/isolinux/initrd.d/modules/
+
+
+# Pack new modules
+cd $K_VERSION
+find . | cpio --create --format='newc' > ../../modules.cpio
+cd ../../
+gzip modules.cpio
+mv modules.cpio.gz modules.cgz
+rm -fR modules.d
+
+
+# Make new initrd.img
+cd ${WD}/isolinux/initrd.d
+find . | cpio --create --format='newc' > ../initrd.cpio
+cd ../
+gzip -f initrd.cpio
+mv initrd.cpio.gz initrd.img
+rm -fR initrd.d
+
+
+# Copy new kernel into isolinux directory
+cp /boot/vmlinuz-${K_VERSION} ${WD}/isolinux/vmlinuz
+
+
+# Make ISO image
+chmod 644 ${WD}/isolinux/isolinux.bin
+mkisofs -R -o $T_IMAGE -b isolinux/isolinux.bin -c isolinux/boot.cat -no-emul-boot \
+	-boot-load-size 4 -boot-info-table -V "FC/5 i386" $WD
+
+echo "Done"

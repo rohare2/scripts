@@ -1,0 +1,650 @@
+#!/usr/bin/perl -w
+#
+# $Id: sar_plot 964 2009-03-12 04:40:42Z rohare $
+# $URL: https://restless/svn/scripts/trunk/sar_plot $
+#
+# sar_plot plots sar output using gnuplot.
+
+use strict;
+use Getopt::Long;
+$Getopt::Long::ignorecase = 0;
+use Graphics::GnuplotIF qw(GnuplotIF);
+
+
+my $OPT;
+my @data;
+my $datafile="/tmp/gnuplot_data$$";
+my $cmndfile="/tmp/gnuplot_cmnd$$";
+my $cmd;
+
+# Process command line options
+my ($host_parm,$net_parm,$cpu_parm,$mem_parm,$start_parm,$end_parm,
+	$io_parm,$file_parm,$queue_parm);
+my %optctl = ( b =>  \$io_parm,
+	e => \$end_parm,
+	h => \$host_parm,
+	f => \$file_parm,
+	n => \$net_parm,
+	q => \$queue_parm,
+	r => \$mem_parm,
+	s => \$start_parm,
+	u => \$cpu_parm);
+
+my $ret = &GetOptions(\%optctl, "b", "e=s", "h=s", "n=s", "q", "r",
+	"s=s", "u", "f=s");
+
+$ret == 1 || die "Can't process options: $!";
+
+! defined $net_parm && ! defined $mem_parm && ! defined $cpu_parm &&
+	! defined $io_parm && ! defined $queue_parm && &usage;
+
+if (defined $host_parm) {
+	$cmd = "ssh $host_parm sar";
+} else {
+	$cmd = "sar";
+}
+
+# Determine operating system
+my $OS = `uname -o`;
+chomp $OS;
+
+
+# Assign sar command options based upon OS version
+if ($OS eq 'GNU/Linux') {
+	defined $io_parm && ($OPT = "-b");
+	defined $net_parm && ($OPT = "-n $net_parm");
+	defined $queue_parm && ($OPT = "-q");
+	defined $mem_parm && ($OPT = "-r");
+	defined $cpu_parm && ($OPT = "-u");
+}
+
+if (defined $start_parm){
+	if ($start_parm =~ /\./) {
+		my ($hr,$min,$sec);
+
+		$start_parm =~ /:/ && die "Invalid start paramater $start_parm";
+
+		$sec = $start_parm*3600;
+	}
+
+	$OPT = $OPT . " -s $start_parm";
+}
+
+if (defined $end_parm){
+	if ($end_parm =~ /\./) {
+		my ($hr,$min,$sec);
+
+		$end_parm =~ /:/ && die "Invalid end paramater $end_parm";
+
+		$sec = $end_parm*3600;
+	}
+
+	$OPT = $OPT . " -e $end_parm";
+}
+
+defined $file_parm && ($OPT = $OPT . " -f /var/log/sa/${file_parm}");
+
+# Linux systems
+if ($OS eq 'GNU/Linux') {
+	$cpu_parm && &LinuxCPU();
+	$io_parm && &LinuxIO();
+	$queue_parm && &LinuxQueue();
+	if (defined $net_parm) {
+		$net_parm eq 'DEV' && &LinuxNet_DEV();
+		$net_parm eq 'EDEV' && &LinuxNet_EDEV();
+		$net_parm eq 'NFS' && &LinuxNet_NFS();
+		$net_parm eq 'NFSD' && &LinuxNet_NFSD();
+	}
+	$mem_parm && &LinuxMem();
+
+}
+
+exit 0;
+
+#
+## Usage
+##
+sub usage() {
+	print STDERR << "EOF";
+
+Usage:	sar_plot {-bhqru} [-f sadd] [-s hr:min:sec] [-e hr:min:sec]
+
+	sar_plot -n {DEV|EDEV|NFS|NFSD|SOCK} [-f sadd] [<device>]
+		[-s hr:min:sec] [-e hr:min:sec]
+
+	-e	Ending time
+	-h	Target hostname, default localhost
+	-b	Block IO statistics
+	-f	Extract records from filename (Ex: sa23)
+	-n	Network statistics
+		<device> ex: eth0
+	-q	Extract data from filename
+	-r	Memory statistics
+	-s	Starting time
+	-u	CPU load stastics
+EOF
+	exit;
+}
+
+
+#
+## Linux CPU load
+#
+sub LinuxCPU() {
+	my ($hms,$AorP);
+	my ($linux,$version,$host,$date);
+	my ($cpu,$usr,$nice,$sys,$wio,$steal,$idle);
+	my (@x,@y1,@y2,@y3);
+	my @ytitles = ('usr','sys','wio');
+
+	open (DATA, "$cmd $OPT |") || die "Cannot open sar process";
+
+	while (<DATA>) {
+		my $line = $_;
+		$line =~ /^$/ && next;
+		$line =~ /%user/ && next;
+		$line =~ /RESTART/ && next;
+		$line =~ /Average/ && next;
+		chomp $line;
+
+		if ($line =~ /^Linux/ && ! defined $date) {
+			($linux,$version,$host,$date) = split (/\s+/, $line);
+			chomp $date;
+		} else {
+			($hms,$AorP,$cpu,$usr,$nice,$sys,$wio,$steal,$idle) =
+				split (' ', $line);
+
+			$hms = &adjustTime($hms,$AorP);
+
+			push(@x,$hms);
+			push(@y1,$usr);
+			push(@y2,$sys);
+			push(@y3,$wio);
+		}
+	}
+	close DATA;
+
+	my $plot = Graphics::GnuplotIF->new(
+		style => "lines",
+		title => "$host CPU Usage - $date",
+		ylabel => "Percent",
+		persist => 1);
+	
+	$plot->gnuplot_cmd("set xdata time");
+	$plot->gnuplot_cmd("set timefmt \"%H:%M:%S\"");
+	$plot->gnuplot_cmd("set format x \"%H:%M:%S\"");
+	$plot->gnuplot_cmd("set grid");
+	$plot->gnuplot_cmd("set xtics rotate by 90");
+	$plot->gnuplot_set_plot_titles(@ytitles);
+	$plot->gnuplot_plot_xy( \@x, \@y1, \@y2, \@y3 );
+}
+
+#
+## Linux IO in transfers per secound
+#
+sub LinuxIO() {
+	my ($hms,$AorP);
+	my ($linux,$version,$host,$date);
+	my ($tps,$rtps,$wtps,$bread,$bwrtn);
+	my (@x,@y1,@y2,@y3,@y4,@y5);
+	my @yTPStitles = ('tps','rtps','wtps');
+	my @yBtitles = ('bread','bwrtn');
+
+	open (DATA, "$cmd $OPT |") || die "Cannot open sar process";
+
+	while (<DATA>) {
+		my $line = $_;
+		$line =~ /^$/ && next;
+		$line =~ /bread/ && next;
+		$line =~ /Average/ && next;
+		chomp $line;
+
+		if ($line =~ /^Linux/ && ! defined $date) {
+			($linux,$version,$host,$date) = split (/\s+/, $line);
+			chomp $date;
+		} else {
+			($hms,$AorP,$tps,$rtps,$wtps,$bread,$bwrtn) =
+				split (' ', $line);
+
+			$hms = &adjustTime($hms,$AorP);
+
+			push (@x,$hms);
+			push (@y1,$tps);
+			push (@y2,$rtps);
+			push (@y3,$wtps);
+			push (@y4,$bread);
+			push (@y5,$bwrtn);
+		}
+	}
+	close DATA;
+
+	my $plot1 = Graphics::GnuplotIF->new(
+		style => "lines",
+		title => "$host IO Usage - $date",
+		xlabel => "Time",
+		ylabel => "Transaction per Second",
+		persist => 1);
+	
+	$plot1->gnuplot_cmd("set xdata time");
+	$plot1->gnuplot_cmd("set timefmt \"%H:%M:%S\"");
+	$plot1->gnuplot_cmd("set format x \"%H:%M:%S\"");
+	$plot1->gnuplot_cmd("set grid");
+	$plot1->gnuplot_cmd("set xtics rotate by 90");
+	$plot1->gnuplot_set_plot_titles(@yTPStitles);
+	$plot1->gnuplot_plot_xy( \@x, \@y1, \@y2, \@y3 );
+
+	my $plot2 = Graphics::GnuplotIF->new(
+		style => "lines",
+		title => "$host IO Usage - $date",
+		xlabel => "Time",
+		ylabel => "Bytes per Second",
+		persist => 1);
+	
+	$plot2->gnuplot_cmd("set xdata time");
+	$plot2->gnuplot_cmd("set timefmt \"%H:%M:%S\"");
+	$plot2->gnuplot_cmd("set format x \"%H:%M:%S\"");
+	$plot2->gnuplot_cmd("set grid");
+	$plot2->gnuplot_cmd("set xtics rotate by 90");
+	$plot2->gnuplot_set_plot_titles(@yBtitles);
+	$plot2->gnuplot_plot_xy( \@x, \@y4, \@y5 );
+}
+
+
+#
+## Linux Net DEV load
+#
+sub LinuxNet_DEV() {
+	my @interfaces;
+	my @SAR;
+	my ($hms,$AorP);
+	my ($linux,$version,$host,$date);
+	my ($iface,$rxpcks,$txpcks,$rxbyts,$txbyts,$rxcmps,$txcmps,$rxmcsts);
+	my (@x,@y1,@y2);
+	my @ytitles = ('rxbyts','txbyts');
+
+	open (DATA, "$cmd $OPT |") || die "Cannot open sar process";
+	while (<DATA>) {
+		my $line = $_;
+		$line =~ /^$/ && next;
+		$line =~ /IFACE/ && next;
+		$line =~ /Average/ && next;
+		$line =~ /RESTART/ && next;
+		chomp $line;
+
+		if ($line =~ /^Linux/ && ! defined $date) {
+			($linux,$version,$host,$date) = split (/\s+/, $line);
+			chomp $date;
+		} else {
+			if (defined $ARGV[0]) {
+				$line =~ $ARGV[0] || next;
+			}
+			push @SAR, $line;
+		}
+	}
+	close DATA;
+
+	foreach my $line (@SAR) {
+		my $found = 0;
+		my ($hms,$AorP,$intf,$junk) = split (/\s+/, $line);
+
+		foreach my $entry (@interfaces) {
+			$entry eq $intf && ($found = 1);
+		}
+
+		$found && next;
+		push @interfaces, $intf;
+	}
+
+	foreach my $entry (@interfaces) {
+		undef @x; undef @y1; undef @y2;
+		foreach my $line (@SAR) {
+			$line =~ $entry || next;
+
+			($hms,$AorP,$iface,$rxpcks,$txpcks,$rxbyts,$txbyts,
+			$rxcmps,$txcmps,$rxmcsts) = split (' ', $line);
+
+			$hms = &adjustTime($hms,$AorP);
+
+			push(@x,$hms);
+			push(@y1,$rxbyts);
+			push(@y2,$txbyts);
+		}
+
+		my $plot = Graphics::GnuplotIF->new(
+			style => "lines",
+			title => "$host $entry Net Usage - ${date}",
+			xlabel => "Time",
+			ylabel => "Bytes Per Second",
+			persist => 1);
+		
+		$plot->gnuplot_cmd("set xdata time");
+		$plot->gnuplot_cmd("set timefmt \"%H:%M:%S\"");
+		$plot->gnuplot_cmd("set format x \"%H:%M:%S\"");
+		$plot->gnuplot_cmd("set grid");
+		$plot->gnuplot_cmd("set xtics rotate by 90");
+		$plot->gnuplot_set_plot_titles(@ytitles);
+		$plot->gnuplot_plot_xy( \@x, \@y1, \@y2 );
+	}
+}
+
+#
+## Linux Net EDEV load
+#
+sub LinuxNet_EDEV() {
+	my @interfaces;
+	my @SAR;
+	my ($hms,$AorP);
+	my ($linux,$version,$host,$date);
+	my ($iface,$rxerrps,$txerrps,$collps,$rxdropps,$txdropps);
+	my ($txcarrps,$rxframps,$rxfifops,$txfifops);
+	my (@x,@y1,@y2,@y3,@y4,@y5,@y6,@y7,@y8,@y9);
+	my @ytitles = ('rxerr/s','txerr/s','coll/s','rxdrop/s','txdrop/s',
+		'$txcarr/s','rxfram/s','rxfifo/s','txfifo/s');
+
+	open (DATA, "$cmd $OPT |") || die "Cannot open sar process";
+	while (<DATA>) {
+		my $line = $_;
+		$line =~ /^$/ && next;
+		$line =~ /IFACE/ && next;
+		$line =~ /Average/ && next;
+		chomp $line;
+
+		if ($line =~ /^Linux/ && ! defined $date) {
+			($linux,$version,$host,$date) = split (/\s+/, $line);
+			chomp $date;
+		} else {
+			if (defined $ARGV[0]) {
+				$line =~ $ARGV[0] || next;
+			}
+			push @SAR, $line;
+		}
+	}
+	close DATA;
+
+	foreach my $line (@SAR) {
+		my $found = 0;
+		my ($hms,$AorP,$intf,$junk) = split (/\s+/, $line);
+
+		foreach my $entry (@interfaces) {
+			$entry eq $intf && ($found = 1);
+		}
+
+		$found && next;
+		push @interfaces, $intf;
+	}
+
+	foreach my $entry (@interfaces) {
+		undef @x; undef @y1; undef @y2; undef @y3; undef @y4;
+		undef @y5; undef @y6; undef @y7; undef @y8; undef @y9;
+		foreach my $line (@SAR) {
+			$line =~ $entry || next;
+
+			($hms,$AorP,$iface,$rxerrps,$txerrps,$collps,$rxdropps,$txdropps,
+			$txcarrps,$rxframps,$rxfifops,$txfifops) =
+				split (' ', $line);
+
+			$hms = &adjustTime($hms,$AorP);
+
+			push(@x,$hms);
+			push(@y1,$rxerrps);
+			push(@y2,$txerrps);
+			push(@y3,$collps);
+			push(@y4,$rxdropps);
+			push(@y5,$txdropps);
+			push(@y6,$txcarrps);
+			push(@y7,$rxframps);
+			push(@y8,$rxfifops);
+			push(@y9,$txfifops);
+		}
+
+		my $plot = Graphics::GnuplotIF->new(
+			style => "lines",
+			title => "$host $entry Network Errors - ${date}",
+			xlabel => "Time",
+			ylabel => "Bytes Per Second",
+			persist => 1);
+		
+		$plot->gnuplot_cmd("set xdata time");
+		$plot->gnuplot_cmd("set timefmt \"%H:%M:%S\"");
+		$plot->gnuplot_cmd("set format x \"%H:%M:%S\"");
+		$plot->gnuplot_cmd("set grid");
+		$plot->gnuplot_cmd("set xtics rotate by 90");
+		$plot->gnuplot_set_plot_titles(@ytitles);
+		$plot->gnuplot_plot_xy(\@x,\@y1,\@y2,\@y3,\@y4,\@y5,\@y6,\@y7,\@y8,\@y9);
+	}
+}
+
+
+#
+## Linux NFS Client Activity
+#
+sub LinuxNet_NFS() {
+	my ($hms,$AorP);
+	my ($linux,$version,$host,$date);
+	my ($callps,$retransps,$readps,$writeps,$accessps,$getattps);
+	my (@x,@y1,@y2,@y3,@y4,@y5,@y6);
+	my @ytitles = ('call/s','retrans/s','read/s','$write/s','access/s','getatt/s');
+
+	open (DATA, "$cmd $OPT |") || die "Cannot open sar process";
+
+	while (<DATA>) {
+		my $line = $_;
+		$line =~ /^$/ && next;
+		$line =~ /retrans/ && next;
+		$line =~ /^Average/ && next;
+		chomp $line;
+
+		if ($line =~ /^Linux/ && ! defined $date) {
+			($linux,$version,$host,$date) = split (/\s+/, $line);
+			chomp $date;
+		} else {
+			($hms,$AorP,$callps,$retransps,$readps,$writeps,
+				$accessps,$getattps) = split (' ', $line);
+
+			$hms = &adjustTime($hms,$AorP);
+
+			push(@x,$hms);
+			push(@y1,$callps);
+			push(@y2,$retransps);
+			push(@y3,$readps);
+			push(@y4,$writeps);
+			push(@y5,$accessps);
+			push(@y6,$getattps);
+		}
+	}
+	close DATA;
+
+	my $plot = Graphics::GnuplotIF->new(
+		style => "lines",
+		title => "$host NFS Client Activity - $date",
+		xlabel => "Time",
+		ylabel => "kbytes",
+		persist => 1);
+	
+	$plot->gnuplot_cmd("set xdata time");
+	$plot->gnuplot_cmd("set timefmt \"%H:%M:%S\"");
+	$plot->gnuplot_cmd("set format x \"%H:%M:%S\"");
+	$plot->gnuplot_cmd("set grid");
+	$plot->gnuplot_cmd("set xtics rotate by 90");
+	$plot->gnuplot_set_plot_titles(@ytitles);
+	$plot->gnuplot_plot_xy( \@x, \@y1, \@y2, \@y3, \@y4, \@y5, \@y6 );
+}
+
+
+#
+## Linux NFS Server Activity
+#
+sub LinuxNet_NFSD() {
+	my ($hms,$AorP);
+	my ($linux,$version,$host,$date);
+	my ($scallps,$badcallps,$packetps,$udpps,$tcpps);
+	my (@x,@y1,@y2,@y3,@y4,@y5);
+	my @ytitles = ('sall/s','badcall/s','packet/s','udp/s','tcp/s');
+
+	open (DATA, "$cmd $OPT |") || die "Cannot open sar process";
+
+	while (<DATA>) {
+		my $line = $_;
+		$line =~ /^$/ && next;
+		$line =~ /badcall/ && next;
+		$line =~ /^Average/ && next;
+		chomp $line;
+
+		if ($line =~ /^Linux/ && ! defined $date) {
+			($linux,$version,$host,$date) = split (/\s+/, $line);
+			chomp $date;
+		} else {
+			($hms,$AorP,$scallps,$badcallps,$packetps,$udpps,$tcpps)
+				 = split (' ', $line);
+
+			$hms = &adjustTime($hms,$AorP);
+
+			push(@x,$hms);
+			push(@y1,$scallps);
+			push(@y2,$badcallps);
+			push(@y3,$packetps);
+			push(@y4,$udpps);
+			push(@y5,$tcpps);
+		}
+	}
+	close DATA;
+
+	my $plot = Graphics::GnuplotIF->new(
+		style => "lines",
+		title => "$host NFS Server Activity - $date",
+		xlabel => "Time",
+		ylabel => "Requests / Packets per second",
+		persist => 1);
+	
+	$plot->gnuplot_cmd("set xdata time");
+	$plot->gnuplot_cmd("set timefmt \"%H:%M:%S\"");
+	$plot->gnuplot_cmd("set format x \"%H:%M:%S\"");
+	$plot->gnuplot_cmd("set grid");
+	$plot->gnuplot_cmd("set xtics rotate by 90");
+	$plot->gnuplot_set_plot_titles(@ytitles);
+	$plot->gnuplot_plot_xy( \@x, \@y1, \@y2, \@y3, \@y4, \@y5 );
+}
+#
+## Linux Memory usage
+#
+sub LinuxMem() {
+	my ($hms,$AorP);
+	my ($linux,$version,$host,$date);
+	my ($kbmemfree,$kbmemused,$pmemused,$kbbuffers,$kbcached,$kbswpfree,
+		$kbswpused,$pswpused,$kbswpcad);
+	my (@x,@y1,@y2,@y3,@y4,@y5,@y6,@y7);
+	my @ytitles = ('kbmemfree','kbmemused','kbbuffers','kbcached','kbswpused');
+
+	open (DATA, "$cmd $OPT |") || die "Cannot open sar process";
+
+	while (<DATA>) {
+		my $line = $_;
+		$line =~ /^$/ && next;
+		$line =~ /kbmemfree/ && next;
+		$line =~ /^Average/ && next;
+		chomp $line;
+
+		if ($line =~ /^Linux/ && ! defined $date) {
+			($linux,$version,$host,$date) = split (/\s+/, $line);
+			chomp $date;
+		} else {
+			($hms,$AorP,$kbmemfree,$kbmemused,$pmemused,$kbbuffers,
+			$kbcached,$kbswpfree,$kbswpused,$pswpused,$kbswpcad)
+				= split (' ', $line);
+
+			$hms = &adjustTime($hms,$AorP);
+
+			push(@x,$hms);
+			push(@y1,$kbmemfree);
+			push(@y2,$kbmemused);
+			push(@y3,$kbbuffers);
+			push(@y4,$kbcached);
+			push(@y5,$kbswpused);
+		}
+	}
+	close DATA;
+
+	my $plot = Graphics::GnuplotIF->new(
+		style => "lines",
+		title => "$host Memory Usage - $date",
+		xlabel => "Time",
+		ylabel => "kbytes",
+		persist => 1);
+	
+	$plot->gnuplot_cmd("set xdata time");
+	$plot->gnuplot_cmd("set timefmt \"%H:%M:%S\"");
+	$plot->gnuplot_cmd("set format x \"%H:%M:%S\"");
+	$plot->gnuplot_cmd("set grid");
+	$plot->gnuplot_cmd("set xtics rotate by 90");
+	$plot->gnuplot_set_plot_titles(@ytitles);
+	$plot->gnuplot_plot_xy( \@x, \@y1, \@y2, \@y3, \@y4, \@y5 );
+}
+
+#
+## LinuxQueue
+#
+sub LinuxQueue() {
+	my ($hms,$AorP);
+	my ($linux,$version,$host,$date);
+	my ($runq_sz,$plist_sz,$ldavg_1,$ldavg_5,$ldavg_15);
+	my (@x,@y1,@y2,@y3);
+	my @ytitles = ('ldavg-1', 'ldavg-5', 'ldavg-15');
+
+	open (DATA, "$cmd $OPT |") || die "Cannot open sar process";
+
+	while (<DATA>) {
+		my $line = $_;
+		$line =~ /^$/ && next;
+		$line =~ /Average/ && next;
+		$line =~ /runq-sz/ && next;
+		chomp $line;
+
+		if ($line =~ /^Linux/ && ! defined $date) {
+			($linux,$version,$host,$date) = split (/\s+/, $line);
+			chomp $date;
+		} else {
+			($hms,$AorP,$runq_sz,$plist_sz,$ldavg_1,$ldavg_5,$ldavg_15) =
+				split ('\s+', $line);
+
+			$hms = &adjustTime($hms,$AorP);
+
+			push(@x,$hms);
+			push(@y1,$ldavg_1);
+			push(@y2,$ldavg_5);
+			push(@y3,$ldavg_15);
+		}
+	}
+	close DATA;
+	
+	my $plot = Graphics::GnuplotIF->new(
+		style => "lines",
+		title => "$host System Load - $date",
+		xlabel => "Time",
+		ylabel => "Load Average",
+		persist => 1);
+	
+	$plot->gnuplot_cmd("set xdata time");
+	$plot->gnuplot_cmd("set timefmt \"%H:%M:%S\"");
+	$plot->gnuplot_cmd("set format x \"%H:%M:%S\"");
+	$plot->gnuplot_cmd("set grid");
+	$plot->gnuplot_cmd("set xtics rotate by 90");
+	$plot->gnuplot_set_plot_titles(@ytitles);
+	$plot->gnuplot_plot_xy( \@x, \@y1, \@y2, \@y3 );
+}
+
+#
+## Convert hours,minutes,seconds to seconds.
+#
+sub adjustTime() {
+	my $hms = shift @_;
+	my $AorP = shift @_;
+
+	my ($hr,$min,$sec) = split(':', $hms);
+	$AorP eq "AM" && $hr eq 12 && ($hr = $hr-12);
+	$AorP eq "PM" && $hr lt 12 && ($hr = $hr+12);
+
+	$hms = $hr . ":" . $min . ":" . $sec;
+		
+	return $hms;
+}
+

@@ -1,0 +1,24 @@
+#!/bin/bash
+#$Id: howto 959 2009-02-04 03:29:52Z rohare $
+#$Source: $
+#
+# This script is for maintaining the ~/.howto file.
+#
+# Options:
+#       -a              Append a new record to the end
+
+HOWTO=~/.howto
+
+if [ ! -f $HOWTO ]; then
+	echo "### `date +\"%D %T\"`: Journal day one" > $HOWTO
+	chmod 600 $HOWTO
+fi
+
+if [ "$1" = "-a" ] ; then
+	echo "" >> $HOWTO
+	echo "### `date +\"%D %T\"`:" >> $HOWTO
+	echo "" >> $HOWTO
+    vi "+set autoindent" + $HOWTO
+else
+    view "+set autoindent" + $HOWTO
+fi

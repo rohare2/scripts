@@ -1,0 +1,70 @@
+# !/bin/bash
+# $Id: sedit 19 2015-05-06 21:40:32Z ohare2 $
+# $URL: https://corbin.llnl.gov/repos/scripts/sedit $
+
+if [ $# -lt 1 ]; then
+	echo "Usage: $0 [c|d] filename"
+	exit
+fi
+
+case $1 in
+	-c)
+		op="encrypt"
+		file=$2
+		;;
+	-d)
+		op="decrypt"
+		file=$2
+		;;
+	-[a-z])
+		echo "invalid option $1"
+		exit
+		;;
+	*)
+		op="edit"
+		file=$1
+		;;
+esac
+
+if [ ! -f "$file" ]; then
+	echo "file ${file} does not exist"
+	exit
+fi
+
+read -p "Password: " -s pw
+echo ""
+
+if [ $op == "encrypt" ]; then
+	UMASK=`umask`
+	umask 077
+	openssl enc -aes-256-ecb -pass pass:$pw -a -salt -in ${file} -out ${file}.rsa || exit
+	rm ${file}
+	umask ${UMASK}
+fi
+
+if [ $op == "edit" ]; then
+	ts=`date +%Y%m%d-%H:%M`
+	cp -p "${file}" "${file}.${ts}"
+	UMASK=`umask`
+	umask 077
+	openssl enc -aes-256-ecb -pass pass:$pw -d -a -salt -in ${file} -out ${file}.$$ || exit
+	cp "$1.$$" "$1.last"
+	vim $1.$$
+	if cmp -s "$1.$$" "$1.last"; then
+		rm "${file}.${ts}"
+	else
+		openssl enc -aes-256-ecb -pass pass:$pw -a -salt -in ${file}.$$ -out ${file}
+	fi
+	rm "$1.last"
+	rm ${file}.$$
+	umask ${UMASK}
+fi
+
+if [ $op == "decrypt" ]; then
+	UMASK=`umask`
+	umask 077
+	openssl enc -aes-256-ecb -pass pass:$pw -d -a -salt -in ${file} -out ${file%.rsa}
+	rm $file
+	umask ${UMASK}
+fi
+

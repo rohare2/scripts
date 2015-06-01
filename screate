@@ -1,0 +1,19 @@
+#! /bin/bash
+
+# $Id: screate 1115 2011-08-25 03:52:43Z rohare $
+# $URL: https://restless/svn/scripts/trunk/screate $
+#
+# screate
+#
+# Encrypted file via openssl
+#
+file=$1
+
+read -p "Password: " -s pw
+echo ""
+UMASK=`umask`
+umask 077
+openssl enc -aes-256-ecb -pass pass:$pw -a -salt -in $1 -out $1.$$
+rm $1
+mv $1.$$ $1
+umask ${UMASK}

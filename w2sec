@@ -1,0 +1,48 @@
+#! /usr/bin/perl -w
+
+use strict;
+
+my $who = "w -hs";
+my @session_list = `$who`;
+my $ps_options = "-o pid,ppid,user,etime,time,tty,comm --sort tty --no-header";
+
+foreach my $line (@session_list) {
+	my ($user,$tty,$from,$idle,$what) = split(/\s+/, $line);
+	print "$tty: $idle\n";
+	my $seconds = w2sec($idle);
+	print "seconds: $seconds\n";
+}
+
+
+sub w2sec {
+	my $idle = "@_";
+	my ($days,$hours,$minutes,$seconds) = 0;
+
+	my $Total = 0;
+
+	if ($idle =~ /^.*s$/) {
+		$seconds = $idle;
+		$seconds =~ s/^(.*)s$/$1/;
+		$Total = $seconds;
+	}
+
+	if ($idle =~ /^\d+:\d+$/) {
+		$minutes = $seconds = $idle;
+		$minutes =~ s/^(\d+):.*$/$1/;
+		$seconds =~ s/^.*:(\d+)$/$1/;
+		$Total = ($minutes * 60) + $seconds;
+	}
+
+	if ($idle =~ /^.*m$/) {
+		$hours = $minutes = $idle;
+		$hours =~ s/^(\d+):\d+m$/$1/;
+		$minutes =~ s/^\d+:(\d+)m$/$1/;
+		$Total = ($hours * 3600) + ($minutes * 60);
+	}
+
+	if ($idle =~ /^.*days$/) {
+		$Total = $idle * 86400;
+	}
+
+	return $Total;
+}

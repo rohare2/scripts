@@ -1,0 +1,33 @@
+#!/bin/bash
+#
+# $Id: journal 959 2009-02-04 03:29:52Z rohare $
+# $URL: https://restless/svn/scripts/trunk/journal $
+#
+# This script is maintaining an activity journal.
+# Reference ~/.journal"
+#
+# Options:
+#	-a			Append a new record to the end
+#	<hostname>		Use this hostname instead of localhost
+
+JOURNAL=~/.journal
+
+if [ ! -f $JOURNAL ]; then
+	echo "### `date +\"%D %T\"`: Journal day one" > $JOURNAL
+	chmod 600 $JOURNAL
+fi
+
+if [ $2 ] ; then
+	HOST=$2
+else
+	HOST=`hostname -s`
+fi
+
+if [ "$1" = "-a" ] ; then
+	echo "" >> $JOURNAL
+	echo "### `date +\"%D %T\"`: $HOST" >> $JOURNAL
+	echo "" >> $JOURNAL
+    vi "+set autoindent" + $JOURNAL
+else
+    view "+set autoindent" + $JOURNAL
+fi

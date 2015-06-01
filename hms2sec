@@ -1,0 +1,52 @@
+#!/usr/bin/perl -w
+#
+#$Id: hms2sec 467 2008-01-05 03:51:34Z rohare $
+#
+#$Log: hms2sec,v $
+#Revision 1.1  2004/03/09 17:52:55  rohare
+#Initial revision
+#
+
+use strict;
+
+my @hms = @ARGV;
+#print "@ARGV\n";  # Uncomment to test operation
+
+foreach my $hms (@hms) {
+	my $ans = hms2sec("$hms");
+	print "$ans\n";
+}
+
+sub hms2sec {
+	my $hms = "@_";
+	my ($days,$hours,$minutes,$seconds);
+	$days = $hours = $minutes = $seconds = $hms;
+
+	my $Total = 0;
+
+	if ($hms =~ /-/) {
+		$days =~ s/^(\d+)-.*$/$1/; 
+		$hours =~ s/^.*-(\d+):\d+:.*$/$1/;
+		$minutes =~ s/^.*-\d+:(\d+):.*$/$1/;
+		$seconds =~ s/^.*:(\d+)$/$1/;
+
+	} else {
+		$days = 0;
+		$hms =~ /:\d+:/ &&
+			(($hours, $minutes, $seconds) = split (':', $hms));
+
+		if ($hms =~ /^\d+:\d+$/) { 
+			$hours = 0;
+			($minutes, $seconds) = split (':', $hms);
+		} 
+		
+		if ($hms =~ /^\d+$/) {
+			$hours = $minutes = 0;
+		}
+	}
+
+	$Total += $days * 86400;
+	$Total += $hours * 3600;
+	$Total += $minutes * 60;
+	$Total += $seconds;
+}
