@@ -3,12 +3,12 @@
 # $URL: https://corbin.llnl.gov/repos/scripts/sedit $
 
 if [ $# -lt 1 ]; then
-	echo "Usage: $0 [c|d] filename"
+	echo "Usage: $0 [-c|-d] filename"
 	exit
 fi
 
 case $1 in
-	-c)
+	-e)
 		op="encrypt"
 		file=$2
 		;;
@@ -37,7 +37,7 @@ echo ""
 if [ $op == "encrypt" ]; then
 	UMASK=`umask`
 	umask 077
-	openssl enc -aes-256-ecb -pass pass:$pw -a -salt -in ${file} -out ${file}.rsa || exit
+	openssl enc -aes-256-ecb -pass pass:$pw -a -salt -pbkdf2 -in ${file} -out ${file}.enc || exit
 	rm ${file}
 	umask ${UMASK}
 fi
@@ -47,13 +47,13 @@ if [ $op == "edit" ]; then
 	cp -p "${file}" "${file}.${ts}"
 	UMASK=`umask`
 	umask 077
-	openssl enc -aes-256-ecb -pass pass:$pw -d -a -salt -in ${file} -out ${file}.$$ || exit
+	openssl enc -aes-256-ecb -pass pass:$pw -d -a -salt -pbkdf2 -in ${file} -out ${file}.$$ || exit
 	cp "$1.$$" "$1.last"
 	vim $1.$$
 	if cmp -s "$1.$$" "$1.last"; then
 		rm "${file}.${ts}"
 	else
-		openssl enc -aes-256-ecb -pass pass:$pw -a -salt -in ${file}.$$ -out ${file}
+		openssl enc -aes-256-ecb -pass pass:$pw -a -salt -pbkdf2 -in ${file}.$$ -out ${file}
 	fi
 	rm "$1.last"
 	rm ${file}.$$
@@ -63,7 +63,7 @@ fi
 if [ $op == "decrypt" ]; then
 	UMASK=`umask`
 	umask 077
-	openssl enc -aes-256-ecb -pass pass:$pw -d -a -salt -in ${file} -out ${file%.rsa}
+	openssl enc -aes-256-ecb -pass pass:$pw -d -a -salt -pbkdf2 -in ${file} -out ${file%.enc}
 	rm $file
 	umask ${UMASK}
 fi

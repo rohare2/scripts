@@ -11,7 +11,6 @@ SCRIPT_FILES= catxml.pl \
 	journal \
 	pwAgeChk.sh \
 	sedit \
-	sshx \
 	w2sec
 
 FILES= ${SCRIPT_FILES}
@@ -22,7 +21,7 @@ all: $(FILES)
 
 install: uid_chk all
 	@for file in ${SCRIPT_FILES}; do \
-		${INST} -p $$file ${SCRIPT_DIR} -o root -g root -m 755; \
+		${INST} -p $$file ${SCRIPT_DIR} -o root -g sudo -m 755; \
 	done
 
 uid_chk:
