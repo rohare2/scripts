@@ -1,6 +1,4 @@
-#$Id: Makefile 1116 2011-08-25 03:53:15Z rohare $
-#$HeadURL: https://restless/svn/scripts/trunk/Makefile $
-#
+# sedit
 
 SCRIPT_DIR= /usr/local/bin
 

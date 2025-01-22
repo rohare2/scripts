@@ -8,7 +8,7 @@ if [ $# -lt 1 ]; then
 fi
 
 case $1 in
-	-e)
+	-c)
 		op="encrypt"
 		file=$2
 		;;
