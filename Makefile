@@ -1,6 +1,7 @@
 # sedit
 
 SCRIPT_DIR= /usr/local/bin
+ADMIN_DIR= /usr/local/sbin
 
 SCRIPT_FILES= catxml.pl \
 	ckinstperlmods.pl \
@@ -11,15 +12,16 @@ SCRIPT_FILES= catxml.pl \
 	sedit \
 	w2sec
 
-FILES= ${SCRIPT_FILES}
+ADMIN_FILES= ban_check.sh
 
 INST= /usr/bin/install
 
-all: $(FILES)
-
-install: uid_chk all
+install: uid_chk 
 	@for file in ${SCRIPT_FILES}; do \
 		${INST} -p $$file ${SCRIPT_DIR} -o root -g sudo -m 755; \
+	done
+	@for file in ${ADMIN_FILES}; do \
+		${INST} -p $$file ${ADMIN_DIR} -o root -g sudo -m 754; \
 	done
 
 uid_chk:
