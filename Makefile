@@ -12,7 +12,9 @@ SCRIPT_FILES= catxml.pl \
 	sedit \
 	w2sec
 
-ADMIN_FILES= ban_check.sh
+ADMIN_FILES= ban_check.sh \
+	extract_us_ips.py \
+	suricata_alert_chk
 
 INST= /usr/bin/install
 

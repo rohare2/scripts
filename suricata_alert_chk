@@ -1,0 +1,88 @@
+#!/bin/env bash
+# suricata_alert_chk
+#
+# Set variables
+dir="/var/log/suricata"
+logFile="${dir}/eve.json"
+sid=
+verbose=0
+
+#########################################################
+# Help
+#########################################################
+Help()
+{
+	# Display Help
+	echo "Syntax: suricata_alert_chk [h|f|l|s}"
+	echo "options:"
+	echo "h    Print this help."
+	echo "d    Optional log file directory"
+	echo "f    Optional log file name"
+	echo "l    List available log files"
+	echo "s    Optional SID to analyse"
+	echo "v    Verbose mode"
+	echo
+}
+
+#########################################################
+# Alert summary report
+#########################################################
+Summary()
+{
+	# Alert summay
+	logFile="$1"
+	echo "Alert summary for logfile: ${logFile}"
+	if [[ ${logFile} == *.gz ]]; then
+		zcat "${logFile}" | jq 'select(.event_type=="alert") | "\(.alert.signature_id) \(.alert.signature)"' | sort | uniq -c | sort -bgr
+	else
+		cat "${logFile}" | jq 'select(.event_type=="alert") | "\(.alert.signature_id) \(.alert.signature)"' | sort | uniq -c | sort -bgr
+	fi
+}
+
+#########################################################
+# SID review
+#########################################################
+SID()
+{
+	# SID reveiw
+	logFile="$1"
+	sid="$2"
+	if [[ ${logFile} == *.gz ]]; then
+		zcat "${logFile}" | jq "select(.alert.signature_id == $sid )"
+	else
+		cat "${logFile}" | jq "select(.alert.signature_id == $sid )"
+	fi
+}
+
+#########################################################
+# Process the input options.
+#########################################################
+# Get the options
+while getopts "hlf::s::v" arg; do
+	case $arg in
+		f) # Log file name
+			logFile=${OPTARG}
+			;;
+		s) # SID to analyse
+			sid=${OPTARG}
+			;;
+		h) # No option
+			Help
+			exit 0
+			;;
+		l) # List log files
+			cmd='ls -ltr ${dir}/eve.json*'
+			eval "$cmd"
+			exit 0
+			;;
+		v) # Verbose mode
+			verbose=1
+			;;
+	esac
+done
+
+if [ -z "${sid}" ]; then
+	Summary "$logFile"
+else
+	SID "$logFile" "$sid"
+fi
