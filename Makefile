@@ -13,6 +13,7 @@ SCRIPT_FILES= catxml.pl \
 	w2sec
 
 ADMIN_FILES= ban_check.sh \
+	block_et.py \
 	extract_us_ips.py \
 	suricata_alert_chk
 
